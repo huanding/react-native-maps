@@ -327,7 +327,7 @@ id regionAsJSON(MKCoordinateRegion region) {
       return @"automatic";
     case kGMSMapViewPaddingAdjustmentBehaviorAlways:
       return @"always";
-      
+
     default:
       return @"unknown";
   }
@@ -518,7 +518,7 @@ id regionAsJSON(MKCoordinateRegion region) {
   NSURL *url = [NSURL URLWithString:kmlUrl];
   NSData *urlData = nil;
 
-  if ([url isFileURL]) {
+  if (![url isFileURL]) {
     urlData = [NSData dataWithContentsOfURL:url];
   } else {
     urlData = [[NSFileManager defaultManager] contentsAtPath:kmlUrl];
@@ -526,6 +526,10 @@ id regionAsJSON(MKCoordinateRegion region) {
 
   GMUKMLParser *parser = [[GMUKMLParser alloc] initWithData:urlData];
   [parser parse];
+  NSError * error = [parser parserError];
+  if(error) {
+    RCTLog(@"GMUKMLParser parser error %@", error);
+  }
 
   NSUInteger index = 0;
   NSMutableArray *markers = [[NSMutableArray alloc]init];
