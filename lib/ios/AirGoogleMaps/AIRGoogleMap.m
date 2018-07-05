@@ -10,6 +10,7 @@
 #import "AIRGoogleMapMarkerManager.h"
 #import "AIRGoogleMapPolygon.h"
 #import "AIRGoogleMapPolyline.h"
+#import "AIRGoogleMapPolylineManager.h"
 #import "AIRGoogleMapCircle.h"
 #import "AIRGoogleMapUrlTile.h"
 #import "AIRGoogleMapOverlay.h"
@@ -17,6 +18,7 @@
 #import <Google-Maps-iOS-Utils/GMUKMLParser.h>
 #import <Google-Maps-iOS-Utils/GMUPlacemark.h>
 #import <Google-Maps-iOS-Utils/GMUPoint.h>
+#import <Google-Maps-iOS-Utils/GMULineString.h>
 #import <Google-Maps-iOS-Utils/GMUGeometryRenderer.h>
 #import <MapKit/MapKit.h>
 #import <React/UIView+React.h>
@@ -36,6 +38,9 @@ id regionAsJSON(MKCoordinateRegion region) {
 
 - (id)eventFromCoordinate:(CLLocationCoordinate2D)coordinate;
 
+- (AIRGoogleMapMarker *)insertMarker:(GMUPlacemark *)place
+                              parser:(GMUKMLParser *)parser
+                             atIndex:(NSInteger)index;
 @end
 
 @implementation AIRGoogleMap
@@ -532,41 +537,103 @@ id regionAsJSON(MKCoordinateRegion region) {
   }
 
   NSUInteger index = 0;
-  NSMutableArray *markers = [[NSMutableArray alloc]init];
+  NSMutableArray *markers = [NSMutableArray array];
+  NSMutableArray *polylines = [NSMutableArray array];
 
   for (GMUPlacemark *place in parser.placemarks) {
-
-    CLLocationCoordinate2D location =((GMUPoint *) place.geometry).coordinate;
-
-    AIRGoogleMapMarker *marker = (AIRGoogleMapMarker *)[[AIRGoogleMapMarkerManager alloc] view];
-    if (!marker.bridge) {
-      marker.bridge = _bridge;
+    id<GMUGeometry> geometry = place.geometry;
+    if ([geometry.type isEqualToString:@"Point"]) {
+      NSDictionary *marker = [self insertMarker:place parser:parser atIndex:index];
+      [markers addObject:marker];
+      index++;
+    } else if ([geometry.type isEqualToString:@"LineString"]) {
+      NSDictionary *polyline = [self insertPolyline:place atIndex:index];
+      [polylines addObject:polyline];
+      index++;
+    } else {
+      RCTLog(@"Unsupported geometry type %@", place.geometry.type);
     }
-    marker.identifier = place.title;
-    marker.coordinate = location;
-    marker.title = place.title;
-    marker.subtitle = place.snippet;
-    marker.pinColor = place.style.fillColor;
-    marker.imageSrc = [AIRGoogleMap GetIconUrl:place parser:parser];
-    marker.layer.backgroundColor = [UIColor clearColor].CGColor;
-    marker.layer.position = CGPointZero;
-
-    [self insertReactSubview:(UIView *) marker atIndex:index];
-
-    [markers addObject:@{@"id": marker.identifier,
-                         @"title": marker.title,
-                         @"description": marker.subtitle,
-                         @"coordinate": @{
-                             @"latitude": @(location.latitude),
-                             @"longitude": @(location.longitude)
-                             }
-                         }];
-
-    index++;
   }
 
-  id event = @{@"markers": markers};
+  id event = @{
+    @"markers": markers,
+    @"polylines": polylines,
+  };
   if (self.onKmlReady) self.onKmlReady(event);
+}
+
+
+- (NSDictionary *)insertPolyline:(GMUPlacemark *)place
+                          atIndex:(NSInteger)index {
+  GMULineString * lineString = place.geometry;
+  AIRGoogleMapPolyline *polyline = (AIRGoogleMapPolyline *)[[AIRGoogleMapPolylineManager alloc] view];
+  if (!polyline.bridge) {
+    polyline.bridge = _bridge;
+  }
+
+  NSMutableArray * coordinates = [NSMutableArray array];
+  for (int i=0; i<[lineString.path count]; i++) {
+    AIRMapCoordinate * coordinate = [AIRMapCoordinate new];
+    coordinate.coordinate = [lineString.path coordinateAtIndex:i];
+    [coordinates addObject:coordinate];
+  }
+  polyline.identifier = [NSString stringWithFormat:@"polyline-%d", index];
+  polyline.title = (place.title == nil ? @"unknown polyline title" : place.title);
+  polyline.coordinates = coordinates;
+  polyline.strokeWidth = 1.0f;
+  polyline.strokeColor = [UIColor colorWithRed:45.0f/255.0f
+                                         green:137.0f/255.0f
+                                          blue:239.0f/255.0f
+                                         alpha:1.0f];
+  [self insertReactSubview:(UIView *) polyline atIndex:index];
+
+  CLLocationCoordinate2D startCoordinate = [lineString.path coordinateAtIndex:0];
+  CLLocationCoordinate2D endCoordinate = [lineString.path coordinateAtIndex:-1];
+
+  return @{
+    @"id":polyline.identifier,
+    @"type":@"polyline",
+    @"title":polyline.title,
+    @"startCoordinate": @{
+      @"latitude": @(startCoordinate.latitude),
+      @"longitude": @(startCoordinate.longitude),
+    },
+    @"endCoordinate": @{
+      @"latitude": @(endCoordinate.latitude),
+      @"longitude": @(endCoordinate.longitude),
+    },
+  };
+}
+
+- (NSDictionary *)insertMarker:(GMUPlacemark *)place
+                              parser:(GMUKMLParser *)parser
+                              atIndex:(NSInteger)index {
+  CLLocationCoordinate2D location = ((GMUPoint *) place.geometry).coordinate;
+
+  AIRGoogleMapMarker *marker = (AIRGoogleMapMarker *)[[AIRGoogleMapMarkerManager alloc] view];
+  if (!marker.bridge) {
+    marker.bridge = _bridge;
+  }
+  marker.identifier = place.title;
+  marker.coordinate = location;
+  marker.title = place.title;
+  marker.subtitle = place.snippet;
+  marker.pinColor = place.style.fillColor;
+  marker.imageSrc = [AIRGoogleMap GetIconUrl:place parser:parser];
+  marker.layer.backgroundColor = [UIColor clearColor].CGColor;
+  marker.layer.position = CGPointZero;
+
+  [self insertReactSubview:(UIView *) marker atIndex:index];
+  return @{
+    @"id": marker.identifier,
+    @"type":@"marker",
+    @"title": marker.title,
+    @"description": marker.subtitle,
+    @"coordinate": @{
+      @"latitude": @(marker.coordinate.latitude),
+      @"longitude": @(marker.coordinate.longitude),
+    },
+  };
 }
 
 @end
